@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gerador de Arte ASCII</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1c1c1e; --card:#fff; --borda:#d8d8dc; --destaque:#4f46e5; --suave:#6b6b73; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#17171a; --fg:#ececf0; --card:#222226; --borda:#3a3a40; --destaque:#8b84ff; --suave:#9a9aa3; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color:var(--suave); margin:0 0 20px; }
+  .layout { display:grid; grid-template-columns: 300px 1fr; gap:20px; align-items:start; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--borda); border-radius:12px; padding:16px; }
+  .drop { display:block; border:2px dashed var(--borda); border-radius:10px; padding:20px; text-align:center;
+          cursor:pointer; color:var(--suave); transition:border-color .15s; }
+  .drop.sobre, .drop:hover { border-color:var(--destaque); }
+  .drop input { display:none; }
+  #miniatura { max-width:100%; max-height:160px; border-radius:6px; margin-top:10px; display:none; }
+  label.campo { display:block; margin-top:16px; font-size:.9rem; }
+  label.campo span { display:flex; justify-content:space-between; margin-bottom:4px; }
+  select, input[type=range] { width:100%; }
+  select { padding:6px; border-radius:6px; border:1px solid var(--borda); background:var(--card); color:var(--fg); }
+  .check { display:flex; gap:8px; align-items:center; margin-top:16px; font-size:.9rem; }
+  .barra { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  button { padding:8px 14px; border-radius:8px; border:1px solid var(--borda); background:var(--card);
+           color:var(--fg); cursor:pointer; font:inherit; }
+  button:hover:not(:disabled) { border-color:var(--destaque); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #status { color:var(--suave); font-size:.9rem; margin-left:auto; }
+  #status.erro { color:#d93025; }
+  #saida { margin:0; padding:12px; border-radius:8px; overflow:auto; max-height:75vh;
+           font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+           font-size:6px; line-height:1.1; white-space:pre; min-height:200px; }
+  #saida.escuro { background:#000; color:#f2f2f2; }
+  #saida.claro  { background:#fff; color:#000; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gerador de Arte ASCII</h1>
+  <p class="sub">Envie uma imagem (ou cole com Ctrl+V) e o servidor converte em arte ASCII.</p>
+
+  <div class="layout">
+    <section class="card">
+      <label class="drop" id="drop">
+        <input type="file" id="arquivo" accept="image/*">
+        <div id="dica">Clique, arraste ou cole uma imagem</div>
+        <img id="miniatura" alt="Pré-visualização">
+      </label>
+
+      <label class="campo">
+        <span>Largura <b id="largura-valor">100</b> caracteres</span>
+        <input type="range" id="largura" min="20" max="250" value="100">
+      </label>
+
+      <label class="campo">
+        <span>Conjunto de caracteres</span>
+        <select id="conjunto">
+          <option value="detalhado">Detalhado</option>
+          <option value="simples">Simples</option>
+          <option value="blocos">Blocos</option>
+          <option value="minimo">Mínimo</option>
+        </select>
+      </label>
+
+      <label class="campo">
+        <span>Fundo</span>
+        <select id="fundo">
+          <option value="escuro">Escuro (texto claro)</option>
+          <option value="claro">Claro (texto escuro)</option>
+        </select>
+      </label>
+
+      <label class="campo">
+        <span>Tamanho da fonte <b id="fonte-valor">6</b>px</span>
+        <input type="range" id="fonte" min="3" max="16" value="6">
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="colorido"> Colorido
+      </label>
+    </section>
+
+    <section class="card">
+      <div class="barra">
+        <button id="copiar" disabled>Copiar texto</button>
+        <button id="baixar" disabled>Baixar .txt</button>
+        <span id="status"></span>
+      </div>
+      <pre id="saida" class="escuro">A arte aparece aqui.</pre>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let arquivo = null;
+let ultimo = null;
+let temporizador = null;
+let requisicao = 0;
+
+function mensagem(texto, erro = false) {
+  const el = $("status");
+  el.textContent = texto;
+  el.className = erro ? "erro" : "";
+}
+
+function escapar(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderizar(dados) {
+  const saida = $("saida");
+  saida.className = $("fundo").value;
+  if (!dados.cores) {
+    saida.textContent = dados.texto;
+    return;
+  }
+  let html = "";
+  dados.texto.split("\n").forEach((linha, y) => {
+    const cores = dados.cores[y];
+    Array.from(linha).forEach((c, x) => {
+      html += `<span style="color:#${cores.substr(x * 6, 6)}">${escapar(c)}</span>`;
+    });
+    html += "\n";
+  });
+  saida.innerHTML = html;
+}
+
+async function gerar() {
+  if (!arquivo) return;
+  const id = ++requisicao;
+  const form = new FormData();
+  form.append("imagem", arquivo);
+  form.append("largura", $("largura").value);
+  form.append("conjunto", $("conjunto").value);
+  form.append("fundo", $("fundo").value);
+  form.append("colorido", $("colorido").checked ? "1" : "0");
+  mensagem("Gerando…");
+  try {
+    const resp = await fetch("/api/ascii", { method: "POST", body: form });
+    const dados = await resp.json();
+    if (id !== requisicao) return; // resposta antiga, ignora
+    if (!resp.ok) throw new Error(dados.erro || "Erro ao gerar a arte.");
+    ultimo = dados;
+    renderizar(dados);
+    $("copiar").disabled = $("baixar").disabled = false;
+    mensagem(`${dados.largura}×${dados.altura} caracteres`);
+  } catch (e) {
+    if (id === requisicao) mensagem(e.message, true);
+  }
+}
+
+function agendar() {
+  clearTimeout(temporizador);
+  temporizador = setTimeout(gerar, 250);
+}
+
+function definirArquivo(f) {
+  if (!f || !f.type.startsWith("image/")) {
+    mensagem("Escolha um arquivo de imagem.", true);
+    return;
+  }
+  arquivo = f;
+  const mini = $("miniatura");
+  mini.src = URL.createObjectURL(f);
+  mini.style.display = "inline-block";
+  $("dica").textContent = f.name || "Imagem colada";
+  gerar();
+}
+
+$("arquivo").addEventListener("change", (e) => definirArquivo(e.target.files[0]));
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("sobre"); }));
+["dragleave", "drop"].forEach((ev) =>
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("sobre"); }));
+drop.addEventListener("drop", (e) => definirArquivo(e.dataTransfer.files[0]));
+
+window.addEventListener("paste", (e) => {
+  const item = [...e.clipboardData.items].find((i) => i.type.startsWith("image/"));
+  if (item) definirArquivo(item.getAsFile());
+});
+
+$("largura").addEventListener("input", (e) => {
+  $("largura-valor").textContent = e.target.value;
+  agendar();
+});
+$("fonte").addEventListener("input", (e) => {
+  $("fonte-valor").textContent = e.target.value;
+  $("saida").style.fontSize = e.target.value + "px";
+});
+["conjunto", "fundo", "colorido"].forEach((id) => $(id).addEventListener("change", agendar));
+
+$("copiar").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(ultimo.texto);
+    mensagem("Copiado!");
+  } catch {
+    mensagem("Não foi possível copiar.", true);
+  }
+});
+
+$("baixar").addEventListener("click", () => {
+  const blob = new Blob([ultimo.texto], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "arte-ascii.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>
